@@ -5,18 +5,10 @@ from weakref import WeakValueDictionary
 import asyncio
 import os
 
-from functools import wraps
-from logging import getLogger
+from logger import get_logger, get_log_decorator
+_logger = get_logger('watch')
+_log = get_log_decorator('watch')
 
-_logger = getLogger(__name__)
-
-def _log(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwds):
-        _logger.debug('{}({}, {})'.format(fn.__name__, args, kwds))
-        res = fn(*args, **kwds)
-        return res
-    return wrapper
 
 if find_library('c'):
     _LIB = cdll.LoadLibrary(find_library('c'))
