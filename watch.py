@@ -5,9 +5,8 @@ from weakref import WeakValueDictionary
 import asyncio
 import os
 
-from logger import get_logger, get_log_decorator
-_logger = get_logger('watch')
-_log = get_log_decorator('watch')
+from logger import get_logger_set
+_logger, _log = get_logger_set('watch')
 
 
 if find_library('c'):
@@ -174,10 +173,10 @@ class Watcher(object):
             await self._event.wait()
             self._event.clear()
 
-    @_log
     def __del__(self):
-        if self._fd:
-            os.close(self._fd)
+        os.close(self._fd)
+
+
 
 
 def force_reload(path): # todo: should change to use functools.partial

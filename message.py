@@ -3,10 +3,9 @@ import re
 import sys
 
 # private source
-from logger import get_logger, get_log_decorator
 import util
-logger = get_logger('message')
-log = get_log_decorator('message')
+from logger import get_logger_set
+logger, log = get_logger_set('message')
 
 
 class BadRequest(Exception):
@@ -20,6 +19,9 @@ class URITooLong(Exception):
 
 class RequestEntityTooLarge(Exception):
     status = http.HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+
+class InternalServerError(Exception):
+    status = http.HTTPStatus.INTERNAL_SERVER_ERROR
 
 class MediaType(util.serializable):
     re = r'(\S+?)/(\S+?) ?; ?(\S+?=\S+)'

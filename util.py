@@ -20,3 +20,36 @@ class serializable(object):
 import datetime
 # RFC 5322 Date and Time specification
 IMFFixdate = '%a, %d %b %Y %H:%M:%S %Z'
+
+
+import re
+
+URI = r'/?[0-9a-zA-Z]*?/?'
+
+# http://taichino.com/programming/1538
+from collections import UserDict
+class RouteRecord(UserDict):
+    """docstring for RouteRecord"""
+    def __init__(self, *args, **kwds):
+        super(RouteRecord, self).__init__(*args, **kwds)
+        self.regex_ = {}
+
+    def __setitem__(self, key, value):
+        if isinstance(key, re.Pattern):
+            self.regex_[key] = value
+        else:
+            self.data[key] = value
+            if key[-1] != '$':
+                key = key + '$'
+            self.regex_[re.compile(key)] = value
+
+    def __getitem__(self, key):
+        print(key)
+        try:
+            return self.data[key]
+        except:
+            for k, v in self.regex_.items():
+                print(k, key)
+                if k.match(key):
+                    return v
+            raise KeyError('{} is not found'.format(key))
