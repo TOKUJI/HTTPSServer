@@ -4,7 +4,9 @@ from struct import unpack
 from weakref import WeakValueDictionary
 import asyncio
 import os
+import logging
 
+# todo: move watch.py to another package.
 from logger import get_logger_set
 _logger, _log = get_logger_set('watch')
 
@@ -137,7 +139,7 @@ class Watcher(object):
         os.execl = _execl
 
     @_log
-    def add_watch(self, path, callback=None):
+    def add_watch(self, path, callback=None, except_=[]):
         wd = _LIB.inotify_add_watch(self._fd, path.encode(), self.IN_CHANGED)
 
         if wd < 0:
@@ -145,7 +147,11 @@ class Watcher(object):
             raise OSError("Could not add this file / directory in the watch list")
 
         self.max_path_length = max(self.max_path_length, os.statvfs(path).f_namemax)
-        self._watch[wd] = {'name':path, 'callback':callback,}
+
+        if except_ and isinstance(except_, str):
+            except_ = [except_]
+
+        self._watch[wd] = {'name':path, 'callback':callback, 'except': except_}
         _logger.debug('{} {}'.format(wd, self._watch[wd]))
 
         return wd
@@ -156,9 +162,12 @@ class Watcher(object):
         header = _InotifyEvent(*unpack("@iIII", buf[:_InotifyEvent.size()]))
         _logger.debug('inotify header: {} '.format(header))
 
-        pathname = buf[_InotifyEvent.size() : _InotifyEvent.size() + header.len]
+        pathname = buf[_InotifyEvent.size() : _InotifyEvent.size() + header.len].decode('utf-8').rstrip('\x00')
+        _logger.debug(pathname not in self._watch[header.wd]['except'])
 
-        if header.wd in self._watch and self._watch[header.wd]['callback']:
+        if header.wd in self._watch \
+            and self._watch[header.wd]['callback'] \
+            and pathname not in self._watch[header.wd]['except']:
             _logger.debug(self._watch[header.wd])
             self._watch[header.wd]['callback']()
         self._event.set()
@@ -198,7 +207,7 @@ if __name__ == '__main__':
     _logger.debug('logger is setted up')
 
     watcher = Watcher()
-    watcher.add_watch('./', callback=force_reload(__file__))
+    watcher.add_watch('./', callback=force_reload(__file__), except_=__file__)
     _logger.debug('watch is added')
 
     try:
