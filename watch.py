@@ -4,11 +4,19 @@ from struct import unpack
 from weakref import WeakValueDictionary
 import asyncio
 import os
-import logging
 
 # todo: move watch.py to another package.
-from logger import get_logger_set
-_logger, _log = get_logger_set('watch')
+from logging import getLogger
+from functools import wraps
+_logger = getLogger('watch')
+def _log(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwds):
+        _logger.debug('{}({}, {})'.format(fn.__name__, args, kwds))
+        res = fn(*args, **kwds)
+        return res
+    return wrapper
+
 
 
 if find_library('c'):
