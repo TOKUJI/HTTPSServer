@@ -55,6 +55,10 @@ class RequestLine(util.serializable):
 
 
 class Header(util.serializable):
+    """ Indicates a header in HTTP-message.
+    you can access via key, value 
+    """
+
     re = r'(\S+?):(.+?)\r\n'
     def __init__(self, key=None, value=None):
         super(Header, self).__init__()
@@ -64,8 +68,9 @@ class Header(util.serializable):
 
     @classmethod
     def load(cls, str_):
+        key, value = None, None
         try:
-            logger.info(str_)
+            logger.info('Header.load({})'.format(str_))
             m = re.match(Header.re, str_) # consider to use re.finditer
             if m:
                 key, value = m.groups()
@@ -79,13 +84,25 @@ class Header(util.serializable):
         return cls(key, value), text
 
     def is_empty(self):
-        return self.key != None
+        return self.key == None
 
     def save(self):
         return '{}:{}\r\n'.format(self.key, self.value)
 
-    def __repr__(self):
-        return self.save()
+class Headers(dict, util.serializable):
+    def save(self):
+        return str(self)
+
+    @classmethod
+    def load(cls, text):
+        headers = cls()
+        while True:
+            header, text = Header.load(text)
+            if not header.is_empty():
+                headers[header.key] = header.value
+            else:
+                break
+        return headers, text
 
 
 class StatusLine(util.serializable):
@@ -98,39 +115,91 @@ class StatusLine(util.serializable):
         return '{} {} {}\r\n'.format(self.version, self.code, self.reason)
 
 
+class ResponseBody(util.serializable):
+    """docstring for ResponseBody"""
+    re = r'(.*)'
+    def __init__(self, str_):
+        super(ResponseBody, self).__init__()
+        self.data = str_
+
+    @classmethod
+    def load(cls, str_):
+        return cls(str_), ''
+
+    def save(self):
+        return self.data
+        
+
+class RequestBody(util.serializable):
+    """docstring for RequestBody"""
+    re = r'[\r\n]*(.+?)=([^&\?]+)&?'
+    def __init__(self, input_=None):
+        super(RequestBody, self).__init__()
+        self.data = input_ # todo: wriute error handling, input_ is not dict nor str
+
+    @classmethod
+    def load(cls, str_):
+
+        try:
+            parsed = {}
+            for i in re.finditer(RequestBody.re, str_, re.MULTILINE):
+                str_ = re.sub(RequestBody.re, '', str_, count=1)
+                key, value = i.groups()
+                parsed[key] = value
+
+        except Exception as e:
+            logger.warning(e)
+            tb = sys.exc_info()[2]
+            raise BadRequest().with_traceback(tb)
+
+        logger.debug('RequestBody.load({})'.format(parsed))
+        return cls(parsed), str_ # text must be '\r\n'?
+        
+    def save(self):
+        res = []
+        if isinstance(self.data, dict):
+            for k, v in self.data.items():
+                res.append('{}={}'.format(k, v))
+     
+            if res:
+                res = '&'.join(res)
+            else:
+                res = ''
+        elif isinstance(self.data, str):
+            res = self.data
+ 
+        return '\r\n' + res
+
+
 class HTTPMessage(util.serializable):
-    def __init__(self, start_line=None, headers={}, message=None):
+    def __init__(self, start_line=None, headers={}, body=None):
         super(HTTPMessage, self).__init__()
         self.start_line = start_line
         self.headers = headers
-        self.message = message
+        self.body = body
 
     def is_empty(self):
         return self.start_line.is_empty() \
              & len(self.headers) == 0 \
-             & len(self.message) == 0
+             & len(self.body) == 0
 
     @classmethod
-    def load(cls, str_):
+    def load(cls, str_, isResponse=True):
         start_line, text = RequestLine.load(str_)
 
-        headers = {}
-        while True:
-            header, text = Header.load(text)
-            if header.is_empty():
-                break
-            headers[header.key] = header.value
+        headers, text = Headers().load(text)
 
-        message = re.sub('^\r\n', '', text, count=1)
+        # consider to use factory pattern or method
+        if isResponse:
+            body, text = RequestBody.load(text)
+        else:
+            body, text = ResponseBody.load(text)
 
-        return cls(start_line, headers, message), ''
+        return cls(start_line, headers, body), text
 
     def save(self):
         res = self.start_line.save() \
-            + ''.join([x.save() for x in self.headers]) \
-            + '\r\n' \
-            + self.message if self.message else ''
+            + self.headers.save() \
+            + self.body.save()
         return res
-
-    def __repr__(self):
-        return self.save()
+# TODO!!!! create Headers class
