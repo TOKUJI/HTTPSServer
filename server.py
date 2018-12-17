@@ -1,9 +1,10 @@
 from functools import wraps
 import asyncio
 import sys
+from inspect import signature
 from http import HTTPStatus
 from datetime import timezone, datetime
-from urllib.parse import urlparse, parse_qs
+# from urllib.parse import urlparse, parse_qs
 
 # private library
 import message
@@ -14,19 +15,23 @@ logger, log = get_logger_set('server')
 
 
 class MyHTTPServer(object):
-    def __init__(self, ssl=None, *args, **kwds):
+    def __init__(self, ssl =None,
+                 router = util.RouteRecord(),
+                 *args, **kwds):
+        """ HTTP Server class.
+        """
         self.ssl = ssl
-        self._route = util.RouteRecord()
+        self._route = router
 
     def make_headers(self):
-        headers = [message.Header('Date', datetime.now(tz=timezone.utc).strftime(util.IMFFixdate)),
-                   message.Header('Server', 'SimpleServer'),
-                   message.Header('Content-Type', 'text/html;charset=utf-8'),
-                   # message.Header('Content-Encoding', ''),
-                   # message.Header('Content-Language', ''),
-                   # message.Header('Content-Location ', 'Tokyo/Japan'),
+        x = [message.Header('Date', datetime.now(tz=timezone.utc).strftime(util.IMFFixdate)),
+             message.Header('Server', 'SimpleServer'),
+             message.Header('Content-Type', 'text/html;charset=utf-8'),
+             # message.Header('Content-Encoding', ''),
+             # message.Header('Content-Language', ''),
+             # message.Header('Content-Location ', 'Tokyo/Japan'),
         ]
-        return headers
+        return message.Headers({h.key:h.value for h in x})
 
     def write_error(self, exception, writer):
         status = message.StatusLine('HTTP/1.1', exception.status)
@@ -35,6 +40,17 @@ class MyHTTPServer(object):
         logger.warning(body)
         result = message.HTTPMessage(status, headers, body).save()
         writer.write(result.encode('utf-8'))
+
+    @log
+    def call_with_args(self, fn, req):
+        """ If request body has some key-value pair and fn requires
+        the same arguments, this function call the fn with arguments
+        supplied in the body.
+        """
+        sig = signature(fn)
+        bn = sig.bind(**req.body.data)
+
+        return fn(*bn.args, **bn.kwargs)
 
 
     @log
@@ -49,7 +65,11 @@ class MyHTTPServer(object):
         """ Handle request and write the result to writer """
         try:
             status = message.StatusLine('HTTP/1.1', HTTPStatus.OK)
-            body = self.match(req.start_line.method, req.start_line.uri)()
+
+            f = self.match(req.start_line.method, req.start_line.uri)
+            body, _ = message.ResponseBody.load(self.call_with_args(f, req))
+            logger.debug(body.save())
+
             headers = self.make_headers()
             result = message.HTTPMessage(status, headers, body).save()
             writer.write(result.encode('utf-8'))
@@ -87,8 +107,8 @@ class MyHTTPServer(object):
 
     def match(self, method, path):
         m = self._route[path]
-        if m[-1] == method:
-            logger.info('{} is mathced'.format(path))
+        if method in m[-1]:
+            logger.info('{}:{} is matched'.format(method, path))
             return m[0]
         else:
             raise KeyError('{} is not registered on the method {}'.format(path, method))
@@ -96,10 +116,15 @@ class MyHTTPServer(object):
     def route(self, method='GET', path='/'):
         """ Register a function in the routing table of this server. """
         def register(fn):
-            self._route[path] = (fn, method)
             @wraps(fn)
             def wrapper(*args, **kwds):
                 logger.info('wrapper is called')
-                fn(*args, **kwds)
+                return fn(*args, **kwds)
+
+            if isinstance(method, str):
+                self._route[path] = (wrapper, [method])
+            else:
+                self._route[path] = (wrapper, method)
+
             return wrapper
         return register
