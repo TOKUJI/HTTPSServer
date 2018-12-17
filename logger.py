@@ -1,5 +1,5 @@
 from functools import wraps
-from logging import getLogger, NullHandler, Formatter
+from logging import getLogger, NullHandler, Formatter, DEBUG
 from copy import copy
 
 
