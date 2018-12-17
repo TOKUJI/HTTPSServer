@@ -44,12 +44,10 @@ class RouteRecord(UserDict):
             self.regex_[re.compile(key)] = value
 
     def __getitem__(self, key):
-        print(key)
         try:
             return self.data[key]
         except:
             for k, v in self.regex_.items():
-                print(k, key)
                 if k.match(key):
                     return v
             raise KeyError('{} is not found'.format(key))
