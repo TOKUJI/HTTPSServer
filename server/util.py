@@ -1,14 +1,14 @@
+from functools import wraps
+
 class serializable(object):
     """ This is ABC of util.serializable classes. Any derived class of this class
     should implement save and load method.
+    todo: use abstract base class
     """
     re = r''
 
-    def __init__(self):
-        self._is_empty = True
-
     def is_empty(self):
-        return self._is_empty
+        return NotImplementedError('serializable.is_empty()')
 
     def save(self):
         return NotImplementedError('serializable.save()')
@@ -50,4 +50,29 @@ class RouteRecord(UserDict):
             for k, v in self.regex_.items():
                 if k.match(key):
                     return v
+            print('{} is not found'.format(key))
             raise KeyError('{} is not found'.format(key))
+
+    def find(self, method, path):
+        m = self.__getitem__(path)
+        if not method in m[1]:
+            print('{} is not registered on the method {}'.format(path, method))
+            raise KeyError('{} is not registered on the method {}'.format(path, method))
+
+        return m[0]
+
+    def route(self, method='GET', path='/'):
+        """ Register a function in the routing table of this server. """
+        def register(fn):
+            @wraps(fn)
+            def wrapper(*args, **kwds):
+                return fn(*args, **kwds)
+
+            if isinstance(method, str):
+                self.__setitem__(path, (wrapper, [method]))
+            else:
+                self.__setitem__(path, (wrapper, method))
+
+            return wrapper
+        return register
+

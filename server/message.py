@@ -1,6 +1,7 @@
 import http
 import re
 import sys
+from http.cookies import SimpleCookie
 
 # private source
 import util
@@ -89,19 +90,46 @@ class Header(util.serializable):
     def save(self):
         return '{}:{}\r\n'.format(self.key, self.value)
 
+
 class Headers(dict, util.serializable):
+    def __init__(self, *args, cookie=SimpleCookie(), **kwds):
+        print(cookie)
+        super(dict, self).__init__()
+        self.cookie = SimpleCookie()
+ 
+    def set_cookie(self, text):
+        logger.info(text)
+        logger.info(self.cookie)
+        self.cookie.load(text)
+
+    def get_cookie(self):
+        return self.cookie.output()
+
     def save(self):
-        return str(self)
+        logger.info(self.cookie)
+        res = []
+        for k, v in self:
+            res.append(Header(k,v).save())
+            logger.info(res)
+        if res:
+            text = '\r\n'.join(*res)
+        else:
+            text = ''
+        return text + self.get_cookie() + '\r\n'
 
     @classmethod
     def load(cls, text):
         headers = cls()
         while True:
             header, text = Header.load(text)
-            if not header.is_empty():
-                headers[header.key] = header.value
-            else:
+            if header.is_empty():
                 break
+
+            if header.key == 'Set-Cookie':
+                self.set_cookie(header.value)
+            else:
+                headers[header.key] = header.value
+
         return headers, text
 
 

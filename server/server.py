@@ -1,7 +1,7 @@
 from functools import wraps
+from inspect import signature, iscoroutinefunction, iscoroutine
 import asyncio
 import sys
-from inspect import signature
 from http import HTTPStatus
 from datetime import timezone, datetime
 # from urllib.parse import urlparse, parse_qs
@@ -33,6 +33,13 @@ class MyHTTPServer(object):
         ]
         return message.Headers({h.key:h.value for h in x})
 
+    def make_response(self, text):
+        status = message.StatusLine('HTTP/1.1', HTTPStatus.OK)
+        headers = self.make_headers()
+        body, _ = message.ResponseBody.load(text)
+        return message.HTTPMessage(status, headers, body)
+
+
     def write_error(self, exception, writer):
         status = message.StatusLine('HTTP/1.1', exception.status)
         headers = self.make_headers()
@@ -40,17 +47,6 @@ class MyHTTPServer(object):
         logger.warning(body)
         result = message.HTTPMessage(status, headers, body).save()
         writer.write(result.encode('utf-8'))
-
-    @log
-    def call_with_args(self, fn, req):
-        """ If request body has some key-value pair and fn requires
-        the same arguments, this function call the fn with arguments
-        supplied in the body.
-        """
-        sig = signature(fn)
-        bn = sig.bind(**req.body.data)
-
-        return fn(*bn.args, **bn.kwargs)
 
 
     @log
@@ -64,15 +60,14 @@ class MyHTTPServer(object):
     async def handle_request(self, req, writer):
         """ Handle request and write the result to writer """
         try:
-            status = message.StatusLine('HTTP/1.1', HTTPStatus.OK)
+            fn = self._route.find(req.start_line.method, req.start_line.uri)
+            response = await self.call_with_args(fn, req)
+            logger.info(response)
 
-            f = self.match(req.start_line.method, req.start_line.uri)
-            body, _ = message.ResponseBody.load(self.call_with_args(f, req))
-            logger.debug(body.save())
+            if isinstance(response, str):
+                response = self.make_response(response)
 
-            headers = self.make_headers()
-            result = message.HTTPMessage(status, headers, body).save()
-            writer.write(result.encode('utf-8'))
+            writer.write(response.save().encode('utf-8'))
 
         except KeyError as e:
             logger.warning(e)
@@ -82,6 +77,24 @@ class MyHTTPServer(object):
             self.write_error(e, writer)
 
         await writer.drain()
+
+    async def call_with_args(self, fn, req):
+        """ If request body has some key-value pair and fn requires
+        the same arguments, this function call the fn with arguments
+        supplied in the body.
+        """
+
+        sig = signature(fn)
+        if 'request' in sig.parameters.keys():
+            bn = sig.bind(request=req, **req.body.data)
+        else:
+            bn = sig.bind(**req.body.data)
+
+        res = fn(*bn.args, **bn.kwargs)
+        if iscoroutine(res):
+            return await res
+        else:
+            return res
 
     def get_callback(self):
         @log
@@ -105,26 +118,16 @@ class MyHTTPServer(object):
     async def run(self, port=80):
         await asyncio.start_server(self.get_callback(), port=port, ssl=self.ssl)
 
-    def match(self, method, path):
-        m = self._route[path]
-        if method in m[-1]:
-            logger.info('{}:{} is matched'.format(method, path))
-            return m[0]
-        else:
-            raise KeyError('{} is not registered on the method {}'.format(path, method))
-
     def route(self, method='GET', path='/'):
-        """ Register a function in the routing table of this server. """
-        def register(fn):
-            @wraps(fn)
-            def wrapper(*args, **kwds):
-                logger.info('wrapper is called')
-                return fn(*args, **kwds)
+        return self._route.route(method=method, path=path)
 
-            if isinstance(method, str):
-                self._route[path] = (wrapper, [method])
-            else:
-                self._route[path] = (wrapper, method)
-
-            return wrapper
-        return register
+    def keep_cookie(self, fn):
+        @wraps
+        def wrapper(request, *args, **kwds):
+            res = fn(*args, **kwds)
+            for k, v in request.headers.cookie.items():
+                logger.info('{}:{}'.format(k, v))
+                if k not in res.headers.cookie:
+                    res.headers.cookie[k] = v
+            return res
+        return wrapper
