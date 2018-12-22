@@ -3,3 +3,5 @@ server.key
 server.csr
 test/
 __pycache__/
+*.log
+*.db
