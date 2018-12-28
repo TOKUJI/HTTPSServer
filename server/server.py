@@ -1,5 +1,5 @@
 from functools import wraps
-from inspect import signature, iscoroutinefunction, iscoroutine
+from inspect import signature, iscoroutine
 import asyncio
 import sys
 from http import HTTPStatus
@@ -7,10 +7,11 @@ from datetime import timezone, datetime
 # from urllib.parse import urlparse, parse_qs
 
 # private library
-import message
-import util
+# from .message import *
+from . import message
+from . import util
 
-from logger import get_logger_set
+from .logger import get_logger_set
 logger, log = get_logger_set('server')
 
 
@@ -43,8 +44,9 @@ class MyHTTPServer(object):
     def write_error(self, exception, writer):
         status = message.StatusLine('HTTP/1.1', exception.status)
         headers = self.make_headers()
-        body = '{} {}'.format(exception.status.value, exception.status.phrase)
-        logger.warning(body)
+        msg = exception.get_message()
+        logger.debug(msg)
+        body = message.ResponseBody(msg)
         result = message.HTTPMessage(status, headers, body).save()
         writer.write(result.encode('utf-8'))
 
@@ -53,19 +55,26 @@ class MyHTTPServer(object):
     async def parse(self, data):
         """ Parse HTTP/1.1 request """
         text = data.decode('utf-8')
-        req, _ = message.HTTPMessage.load(text)
-        return req
+        request, _ = message.HTTPMessage.load(text)
+        return request
 
     @log
-    async def handle_request(self, req, writer):
+    async def handle_request(self, request, writer):
         """ Handle request and write the result to writer """
         try:
-            fn = self._route.find(req.start_line.method, req.start_line.uri)
-            response = await self.call_with_args(fn, req)
-            logger.info(response)
+            fn = self._route.find(request.start_line.method, request.start_line.uri)
+            logger.debug(fn)
+
+            response = await self.call_with_args(fn, request)
+            logger.debug(response.save())
 
             if isinstance(response, str):
                 response = self.make_response(response)
+
+            # append cookie
+            for k, v in request.headers.cookie.items():
+                if k not in response.headers.cookie:
+                    response.headers.set_cookie(k, v)
 
             writer.write(response.save().encode('utf-8'))
 
@@ -73,24 +82,36 @@ class MyHTTPServer(object):
             logger.warning(e)
             self.write_error(message.NotFound().with_traceback(sys.exc_info()[2]), writer)
         except TypeError as e:
+            logger.warning(e)
             e = message.InternalServerError().with_traceback(sys.exc_info()[2])
+            self.write_error(e, writer)
+        except message.BaseHTTPError as e:
+            e = e.with_traceback(sys.exc_info()[2])
+            logger.warning(e)
             self.write_error(e, writer)
 
         await writer.drain()
 
-    async def call_with_args(self, fn, req):
+    async def call_with_args(self, fn, request):
         """ If request body has some key-value pair and fn requires
         the same arguments, this function call the fn with arguments
         supplied in the body.
         """
 
         sig = signature(fn)
-        if 'request' in sig.parameters.keys():
-            bn = sig.bind(request=req, **req.body.data)
+        # delete undeclared parameters
+        if request.body:
+            params = {k:v for k, v in request.body.data.items() if k in sig.parameters}
         else:
-            bn = sig.bind(**req.body.data)
+            params = {}
+
+        if 'request' in sig.parameters.keys():
+            bn = sig.bind_partial(request=request, **params)
+        else:
+            bn = sig.bind_partial(**params)
 
         res = fn(*bn.args, **bn.kwargs)
+
         if iscoroutine(res):
             return await res
         else:
@@ -104,8 +125,8 @@ class MyHTTPServer(object):
                 if reader.at_eof():
                     raise message.RequestEntityTooLarge().with_traceback(sys.exc_info()[2])
 
-                req = await self.parse(request_data)
-                res = await self.handle_request(req, writer)
+                request = await self.parse(request_data)
+                res = await self.handle_request(request, writer)
 
             except Exception as e:
                 self.write_error(e, writer)
@@ -120,14 +141,3 @@ class MyHTTPServer(object):
 
     def route(self, method='GET', path='/'):
         return self._route.route(method=method, path=path)
-
-    def keep_cookie(self, fn):
-        @wraps
-        def wrapper(request, *args, **kwds):
-            res = fn(*args, **kwds)
-            for k, v in request.headers.cookie.items():
-                logger.info('{}:{}'.format(k, v))
-                if k not in res.headers.cookie:
-                    res.headers.cookie[k] = v
-            return res
-        return wrapper
