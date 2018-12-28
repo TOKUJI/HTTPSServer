@@ -171,7 +171,7 @@ class Watcher(object):
         _logger.debug('inotify header: {} '.format(header))
 
         pathname = buf[_InotifyEvent.size() : _InotifyEvent.size() + header.len].decode('utf-8').rstrip('\x00')
-        _logger.debug(pathname not in self._watch[header.wd]['except'])
+        _logger.debug('{} is not in {}'.format(pathname, self._watch[header.wd]['except']))
 
         if header.wd in self._watch \
             and self._watch[header.wd]['callback'] \
