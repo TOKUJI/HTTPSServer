@@ -50,13 +50,23 @@ class RouteRecord(UserDict):
             for k, v in self.regex_.items():
                 if k.match(key):
                     return v
-            print('{} is not found'.format(key))
             raise KeyError('{} is not found'.format(key))
+
+    def __contains__(self, item):
+        if item in self.data:
+            return True
+        else:
+            for k in self.regex_.keys():
+                m = k.match(item)
+                _logger.debug('{} matches {}? {}'.format(k, item, m))
+                if m:
+                    return True
+
+        return False
 
     def find(self, method, path):
         m = self.__getitem__(path)
         if not method in m[1]:
-            print('{} is not registered on the method {}'.format(path, method))
             raise KeyError('{} is not registered on the method {}'.format(path, method))
 
         return m[0]
