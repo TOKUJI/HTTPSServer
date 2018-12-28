@@ -34,6 +34,9 @@ class RequestEntityTooLarge(BaseHTTPError):
 class InternalServerError(BaseHTTPError):
     status = http.HTTPStatus.INTERNAL_SERVER_ERROR
 
+class MethodNotAllowed(BaseHTTPError):
+    status = http.HTTPStatus.METHOD_NOT_ALLOWED
+
 class MediaType(serializable):
     re = r'(\S+?)/(\S+?) ?; ?(\S+?=\S+)'
     pass
