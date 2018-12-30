@@ -3,9 +3,10 @@ import re
 import sys
 import io
 from http.cookies import SimpleCookie
+from collections import defaultdict
 
 # private source
-from .util import serializable
+from .util import serializable, MessageType, HeaderFields
 from .logger import get_logger_set
 logger, log = get_logger_set('message')
 
@@ -73,7 +74,7 @@ class Header(serializable):
     you can access via key, value 
     """
 
-    re = r'(\S+?): +(.+?)\r\n'
+    re = r'(\S+?): ?(.+)'
     def __init__(self, key=None, value=None):
         super(Header, self).__init__()
         self.key = key
@@ -81,21 +82,18 @@ class Header(serializable):
 
 
     @classmethod
+    @log
     def load(cls, str_):
         key, value = None, None
         try:
-            logger.info('Header.load({})'.format(str_))
             m = re.match(Header.re, str_) # consider to use re.finditer
-            if m:
-                key, value = m.groups()
-            text = re.sub(Header.re, '', str_, count=1)
+            key, value = m.groups()
 
         except Exception as e:
             logger.warning(e)
-            tb = sys.exc_info()[2]
-            raise BadRequest().with_traceback(tb)
+            raise BadRequest().with_traceback(sys.exc_info()[2])
 
-        return cls(key, value), text
+        return cls(key, value)
 
     def is_empty(self):
         return self.key == None
@@ -105,23 +103,25 @@ class Header(serializable):
 
 
 class Headers(dict, serializable):
-    def __init__(self, *args, cookie=SimpleCookie(), **kwds):
+    def __init__(self, *, headers=[], cookie=SimpleCookie(), **kwds, ):
         super(dict, self).__init__()
         self.cookie = cookie
+        [self.set_header(header) for header in headers]
 
-    @log 
     def set_cookie(self, key, value):
         self.cookie[key] = value
 
     def get_cookie(self, key):
         return self.cookie[key]
 
-    def save(self):
-        res = []
-        for k, v in self.items():
-            res.append(Header(k,v).save())
-            logger.info(res)
+    def has_message_body(self):
+        if HeaderFields.CONTENT_TYPE.value in self.keys() \
+            or HeaderFields.TRANSFER_ENCODING.value in self.keys():
+            return True
+        return False
 
+    def save(self):
+        res = [Header(k, v).save() for k, v in self.items()]
         text = ''.join(res)
 
         if self.cookie:
@@ -129,20 +129,23 @@ class Headers(dict, serializable):
 
         return text + '\r\n'
 
+    def set_header(self, header):
+        if header.key == 'Cookie':
+            self.cookie.load(header.value)
+        else:
+            self[header.key] = header.value
+
     @classmethod
     def load(cls, text):
         headers = cls()
-        while True:
-            header, text = Header.load(text)
-            if header.is_empty():
-                break
 
-            if header.key == 'Cookie':
-                headers.cookie.load(header.value)
-            else:
-                headers[header.key] = header.value
+        lines = text.split('\r\n')
+        heads = [Header.load(line) for line in lines if line]
 
-        return headers, text
+        for header in heads:
+            headers.set_header(header)
+
+        return headers, ''
 
 
 class StatusLine(serializable):
@@ -164,7 +167,7 @@ class ResponseBody(serializable):
 
     @classmethod
     def load(cls, str_):
-        return cls(str_), ''
+        return cls(str_)
 
     def save(self):
         return self.data
@@ -193,7 +196,7 @@ class RequestBody(serializable):
             raise BadRequest().with_traceback(tb)
 
         logger.debug('RequestBody.load({})'.format(parsed))
-        return cls(parsed), str_ # text must be '\r\n'?
+        return cls(parsed)
         
     def save(self):
         res = []
@@ -223,7 +226,7 @@ class RequestBodyJson(serializable):
         except Exception as e:
             logger.warning(e)
             raise e
-        return cls(data), ''
+        return cls(data)
 
     def save(self):
         return '\r\n' + json.dumps(self.data)
@@ -242,7 +245,7 @@ class HTTPMessage(serializable):
              & len(self.body) == 0
 
     @classmethod
-    def load(cls, str_, isRequest=True):
+    def load(cls, str_, message_type=MessageType.REQUEST):
         try:
             stream = io.StringIO(str_)
             start_line, text = RequestLine.load(stream.readline())
@@ -253,28 +256,20 @@ class HTTPMessage(serializable):
             logger.error(e)
             raise BadRequest()
 
-        if not x[1]:
+        if not headers.has_message_body():
             return cls(start_line, headers, ), x[1]
 
-        if isRequest:
-            t = 'Request'
-        else:
-            t = 'Response'
-        logger.debug('isRequest = {}'.format(isRequest))
-
-        if 'Content-Type' in headers:
-            t2 = headers['Content-Type']
-            logger.debug(headers['Content-Type'])
-        else:
-            t2 = None
-
         try:
-            body, text = _bodyClass[(t, t2)].load(x[1])
+            logger.debug(headers.items())
+            body = _bodyClass[(message_type,
+                               headers[HeaderFields.CONTENT_TYPE.value])
+                             ].load(x[1])
+
         except Exception as e:
             logger.error(e)
             raise BadRequest()
 
-        return cls(start_line, headers, body), text
+        return cls(start_line, headers, body), ''
 
     def save(self):
         res = self.start_line.save() + self.headers.save()
@@ -285,8 +280,8 @@ class HTTPMessage(serializable):
         return res
 
 _bodyClass = {
-    ('Request', None): RequestBody,
-    ('Request', 'application/json'): RequestBodyJson,
-    ('Request', 'application/x-www-form-urlencoded'): RequestBody,
-    ('Response', None): ResponseBody,
+    (MessageType.REQUEST, None): RequestBody,
+    (MessageType.REQUEST, 'application/json'): RequestBodyJson,
+    (MessageType.REQUEST, 'application/x-www-form-urlencoded'): RequestBody,
+    (MessageType.RESPONSE, None): ResponseBody,
 }

@@ -28,16 +28,13 @@ class MyHTTPServer(object):
         x = [message.Header('Date', datetime.now(tz=timezone.utc).strftime(util.IMFFixdate)),
              message.Header('Server', 'SimpleServer'),
              message.Header('Content-Type', 'text/html;charset=utf-8'),
-             # message.Header('Content-Encoding', ''),
-             # message.Header('Content-Language', ''),
-             # message.Header('Content-Location ', 'Tokyo/Japan'),
-        ]
-        return message.Headers({h.key:h.value for h in x})
+            ]
+        return message.Headers(headers=x)
 
     def make_response(self, text):
         status = message.StatusLine('HTTP/1.1', HTTPStatus.OK)
         headers = self.make_headers()
-        body, _ = message.ResponseBody.load(text)
+        body = message.ResponseBody.load(text)
         return message.HTTPMessage(status, headers, body)
 
 
@@ -62,10 +59,14 @@ class MyHTTPServer(object):
     async def handle_request(self, request, writer):
         """ Handle request and write the result to writer """
         try:
-            fn = self._route.find(request.start_line.method, request.start_line.uri)
+            fn, methods = self._route.find(request.start_line.uri)
+            if not request.start_line.method in methods:
+                raise message.MethodNotAllowed()
+
             logger.debug(fn)
 
             response = await self.call_with_args(fn, request)
+            logger.debug(response)
             logger.debug(response.save())
 
             if isinstance(response, str):

@@ -64,12 +64,9 @@ class RouteRecord(UserDict):
 
         return False
 
-    def find(self, method, path):
+    def find(self, path):
         m = self.__getitem__(path)
-        if not method in m[1]:
-            raise KeyError('{} is not registered on the method {}'.format(path, method))
-
-        return m[0]
+        return m[0], m[1]
 
     def route(self, method='GET', path='/'):
         """ Register a function in the routing table of this server. """
@@ -85,4 +82,16 @@ class RouteRecord(UserDict):
 
             return wrapper
         return register
+
+# type definitions
+from enum import Enum, auto
+
+class MessageType(Enum):
+    REQUEST = auto()
+    RESPONSE = auto()
+
+class HeaderFields(Enum):
+    CONTENT_TYPE = 'Content-Type'
+    TRANSFER_ENCODING = 'Transfer-Encoding'
+    
 
