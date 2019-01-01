@@ -25,6 +25,8 @@ IMFFixdate = '%a, %d %b %Y %H:%M:%S %Z'
 import re
 
 URI = r'/?[0-9a-zA-Z]*?/?'
+HTTP2 = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
+# 0x505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
 
 # http://taichino.com/programming/1538
 from collections import UserDict
@@ -93,5 +95,10 @@ class MessageType(Enum):
 class HeaderFields(Enum):
     CONTENT_TYPE = 'Content-Type'
     TRANSFER_ENCODING = 'Transfer-Encoding'
-    
+
+class TransferCodings(Enum):
+    CHUNKED = 'chunked'
+    COMPRESS = 'compress'
+    DEFLATE = 'deflate'
+    GZIP = 'gzip'
 

@@ -38,9 +38,12 @@ class InternalServerError(BaseHTTPError):
 class MethodNotAllowed(BaseHTTPError):
     status = http.HTTPStatus.METHOD_NOT_ALLOWED
 
+class NotImplementedError(BaseHTTPError):
+    status = http.HTTPStatus.NOT_IMPLEMENTED
+
 class MediaType(serializable):
     re = r'(\S+?)/(\S+?) ?; ?(\S+?=\S+)'
-    pass
+
 
 class RequestLine(serializable):
     re = r'(\S+) (\S+) (\S+)\r\n'
@@ -56,11 +59,10 @@ class RequestLine(serializable):
     def load(cls, str_):
         try:
             method, uri, version = re.match(RequestLine.re, str_).groups()
-            text = re.sub(RequestLine.re, '', str_, count=1)
         except Exception as e:
             tb = sys.exc_info()[2]
             raise BadRequest().with_traceback(tb)
-        return cls(method, uri, version), text
+        return cls(method, uri, version)
 
     def save(self):
         return '{} {} {}\r\n'.format(self.method, self.uri, self.version)
@@ -145,7 +147,7 @@ class Headers(dict, serializable):
         for header in heads:
             headers.set_header(header)
 
-        return headers, ''
+        return headers
 
 
 class StatusLine(serializable):
@@ -248,28 +250,29 @@ class HTTPMessage(serializable):
     def load(cls, str_, message_type=MessageType.REQUEST):
         try:
             stream = io.StringIO(str_)
-            start_line, text = RequestLine.load(stream.readline())
+            start_line = RequestLine.load(stream.readline())
 
             x = stream.read().split('\r\n\r\n')
-            headers, text = Headers.load(x[0])
+            headers = Headers.load(x[0])
+
+            body = None
+
+            # TODO: implement to follow transfer-coding
+            if HeaderFields.TRANSFER_ENCODING in headers:
+                raise NotImplementedError()
+            # TODO: implement to handle Content-Length header
+            # TODO: implement to handle Connection header
+            
+            if headers.has_message_body():
+                body = _bodyClass[(message_type,
+                                   headers[HeaderFields.CONTENT_TYPE.value])
+                                 ].load(x[1])
+
         except Exception as e:
             logger.error(e)
             raise BadRequest()
 
-        if not headers.has_message_body():
-            return cls(start_line, headers, ), x[1]
-
-        try:
-            logger.debug(headers.items())
-            body = _bodyClass[(message_type,
-                               headers[HeaderFields.CONTENT_TYPE.value])
-                             ].load(x[1])
-
-        except Exception as e:
-            logger.error(e)
-            raise BadRequest()
-
-        return cls(start_line, headers, body), ''
+        return cls(start_line, headers, body)
 
     def save(self):
         res = self.start_line.save() + self.headers.save()
