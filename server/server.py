@@ -18,13 +18,59 @@ from .logger import get_logger_set
 logger, log = get_logger_set('server')
 
 
+class HandlerBase(object):
+    pass
+
+class HTTP1_1Handler(HandlerBase):
+    pass
+
+class HTTP2Handler(HandlerBase):
+    """docstring for HTTP2Server"""
+    def __init__(self, reader, writer):
+        self.reader = reader
+        self.writer = writer
+
+    async def run(self):
+        frame = await self.parse_stream()
+        await self.handle_frame(frame)
+
+        my_settings = FrameBase.create(0, FrameTypes.SETTINGS.value, b'\x00', frame.stream_identifier + 1)
+        await self.send_frame(my_settings)
+
+        frame = await self.parse_stream()
+        await self.handle_frame(frame)
+
+        frame = await self.parse_stream()
+        await self.handle_frame(frame)
+
+    async def parse_stream(self):
+        data = await self.reader.read(8000) # get setting frame.
+        frame = FrameBase.load(data)
+        return frame
+        
+    async def handle_frame(self, frame):
+        if frame.FrameType() == FrameTypes.HEADERS:
+            pass
+        elif frame.FrameType() == FrameTypes.SETTINGS:
+            self.initial_window_size = frame.initial_window_size
+        elif frame.FrameType() == FrameTypes.WINDOW_UPDATE:
+            self.window_size = frame.window_size
+            # res = FrameBase.create(0, FrameTypes.SETTINGS.value, b'\x01', frame.stream_identifier + 1)
+            # self.writer.write(res.save())
+            # await self.writer.drain()
+
+    async def send_frame(self, frame):
+        self.writer.write(frame.save())
+        await self.writer.drain()
+
 class MyHTTPServer(object):
-    def __init__(self, ssl_context =None,
+    """ HTTP Server class. When ssl_context or certfile is set,
+    this server runs as a HTTPS server.
+    """
+    def __init__(self, 
                  router = util.RouteRecord(),
-                 *, certfile=None, keyfile=None, password=None, **kwds):
-        """ HTTP Server class. When ssl_context or certfile is set,
-        this server runs as a HTTPS server.
-        """
+                 handlers = HTTP1_1Handler(),
+                 *, ssl_context =None, certfile=None, keyfile=None, password=None, **kwds):
 
         # Create TLS context
         if ssl_context and certfile:
@@ -94,6 +140,10 @@ class MyHTTPServer(object):
                 if k not in response.headers.cookie:
                     response.headers.set_cookie(k, v)
 
+            # append Content-Length header
+            length = len(response.body.save().encode('utf-8'))
+            response.headers.set_header(message.Header('Content-Length', length))
+
             writer.write(response.save().encode('utf-8'))
 
         except KeyError as e:
@@ -135,75 +185,33 @@ class MyHTTPServer(object):
         else:
             return res
 
-    def get_callback(self):
-        @log
-        async def client_connected_cb(reader, writer):
-            try:
-                request_data = await reader.read(8000)
-                if False and request_data[:24] == util.HTTP2:
-                    logger.info('HTTP/2 connection is requested. {}'.format(len(request_data)))
-                    http2 = HTTP2Server(reader, writer)
-                    await http2.run()
+    async def client_connected_cb(self, reader, writer):
+        try:
+            request_data = await reader.read(8000)
+            if False and request_data[:24] == util.HTTP2:
+                logger.info('HTTP/2 connection is requested. {}'.format(len(request_data)))
+                http2 = HTTP2Handler(reader, writer)
+                await http2.run()
 
-                else:
-                    if reader.at_eof():
-                        raise message.RequestEntityTooLarge().with_traceback(sys.exc_info()[2])
+            else:
+                if reader.at_eof():
+                    raise message.RequestEntityTooLarge().with_traceback(sys.exc_info()[2])
 
-                    request = await self.parse(request_data)
-                    res = await self.handle_request(request, writer)
+                request = await self.parse(request_data)
+                res = await self.handle_request(request, writer)
 
-            except Exception as e:
-                self.write_error(e, writer)
+        except Exception as e:
+            self.write_error(e, writer)
 
-            finally:
-                writer.close()
-
-        return client_connected_cb
+        finally:
+            writer.close()
 
     async def run(self, port=80):
         rsock_ = create_socket((None, port))
         if self.ssl:
             self.socket = self.ssl.wrap_socket(rsock_, server_side=True)
-        await asyncio.start_server(self.get_callback(), sock=self.socket)
+        await asyncio.start_server(self.client_connected_cb, sock=self.socket)
 
     def route(self, method='GET', path='/'):
         return self._route.route(method=method, path=path)
 
-class HTTP2Server(object):
-    """docstring for HTTP2Server"""
-    def __init__(self, reader, writer):
-        self.reader = reader
-        self.writer = writer
-
-    async def run(self):
-        frame = await self.parse_stream()
-        await self.handle_frame(frame)
-
-        my_settings = FrameBase.create(0, FrameTypes.SETTINGS.value, b'\x00', frame.stream_identifier + 1)
-        await self.send_frame(my_settings)
-
-        frame = await self.parse_stream()
-        await self.handle_frame(frame)
-
-        frame = await self.parse_stream()
-        await self.handle_frame(frame)
-
-    async def parse_stream(self):
-        data = await self.reader.read(8000) # get setting frame.
-        frame = FrameBase.load(data)
-        return frame
-        
-    async def handle_frame(self, frame):
-        if frame.FrameType() == FrameTypes.HEADERS:
-            pass
-        elif frame.FrameType() == FrameTypes.SETTINGS:
-            self.initial_window_size = frame.initial_window_size
-        elif frame.FrameType() == FrameTypes.WINDOW_UPDATE:
-            self.window_size = frame.window_size
-            # res = FrameBase.create(0, FrameTypes.SETTINGS.value, b'\x01', frame.stream_identifier + 1)
-            # self.writer.write(res.save())
-            # await self.writer.drain()
-
-    async def send_frame(self, frame):
-        self.writer.write(frame.save())
-        await self.writer.drain()
